@@ -3,8 +3,8 @@ title: "NYPD Shooting Incident"
 author: "N. Shrestha"
 date: "2023-12-07"
 output:
-  html_document: default
   pdf_document: default
+  html_document: default
 ---
 # Introduction
 This document provides an analysis of the shooting incident data from data.gov.
