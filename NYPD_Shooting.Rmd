@@ -1,0 +1,246 @@
+---
+title: "NYPD Shooting Incident"
+author: "N. Shrestha"
+date: "2023-12-07"
+output:
+  html_document: default
+  pdf_document: default
+---
+# Introduction
+This document provides an analysis of the shooting incident data from data.gov.
+This is a breakdown of every shooting incident that occurred in NYC going back to 2006 through the end of the 2022. Each record represents a shooting incident in NYC and includes information about the event, the location and time of occurrence. In addition, information related to suspect and victim demographics is also included.
+
+We will start by understanding the scope of the problem, followed by the methods we used to dissect the data, employing robust data visualization. We'll uncover key findings, including temporal and spatial patterns of shooting incidents, the demographics of victims, and highlight the critical issue of missing data. Without clear insights into the demographics of victims, including age and gender, as well as the geographical distribution of these incidents, policymakers and law enforcement are at a disadvantage when it comes to crafting effective crime prevention strategies. 
+
+```{r setup}
+## Importing the tidyverse package 
+library(tidyverse)
+```
+
+## Importing NYPD Shooting Incident (Historic) Data from DATA.GOV
+We will begin by importing the dataset 
+``` {r get_nypd_data}
+## Get the url
+url <- "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD"
+```
+
+Let's read in the data to see what we have
+``` {r import_data, message=FALSE}
+shooting_data <- read_csv(url[1])
+```
+
+## Initial Data Exploration
+``` {r view_data}
+## viewing the first few rows of the data
+head(shooting_data)
+```
+
+## Data Summary 
+Before cleaning the data, let's add a summary to it to understand its structure
+``` {r add_summary}
+summary(shooting_data)
+glimpse(shooting_data)
+```
+
+## Cleaning Data
+Let's delete the columns we don't want and also convert the OCCUR_DATE to `<date>` type since it is originally in `<chr>` type. 
+``` {r clean_data}
+shooting_data <- shooting_data %>%
+  select(-c(LOC_OF_OCCUR_DESC:LOCATION_DESC, X_COORD_CD:Lon_Lat)) %>%
+  mutate(OCCUR_DATE = mdy(OCCUR_DATE))
+
+## Viewing the cleaned data
+head(shooting_data)
+```
+## Summary after Cleaning the Data
+```{r summary_cleaning}
+summary(shooting_data)
+#just to see how the incidents are divided across the different boroughs
+borough_count <- shooting_data %>%
+  group_by(BORO) %>%
+  summarise(count = n())
+borough_count
+
+# Checking to see if the total number of data matches with the sum of borogh_count
+total_incidents <- sum(borough_count$count)
+total_incidents
+```
+
+## Handling Missing Data
+First we want to see the missing values in our data and from there we will decide what to do with it
+``` {r missing_data}
+## Find the number of missing data in each category in our dataset
+missing_data_summary <- sapply(shooting_data, function(x) sum(is.na(x)))
+## Display the number of missing data
+missing_data_summary
+```
+
+Most of the missing data is concentrated in specific fields, notably in details pertaining to the perpetrator, including their age group, sex, and race. This absence of information could stem from various factors, with one of the plausible explanations being that the perpetrator has not yet been apprehended, thereby limiting the availability of these details. To handle this absence, I could segment the data into two subsets; one with known perpetrator details and the other one with the unknown ones.
+
+``` {r transformation}
+#Creating indicator variables for the missing data
+shooting_data$missing_age_group <- ifelse(is.na(shooting_data$PERP_AGE_GROUP), 1, 0)
+shooting_data$missing_sex <- ifelse(is.na(shooting_data$PERP_SEX), 1, 0)
+shooting_data$missing_race <- ifelse(is.na(shooting_data$PERP_RACE), 1, 0)
+
+#Checking the amount of missing information for each borough
+missing_by_location <- shooting_data %>%
+  group_by(BORO)%>%
+  summarize(missing_age_count = sum(missing_age_group),
+            missing_sex_count = sum(missing_sex),
+            missing_race_count = sum(missing_race)) %>%
+  pivot_longer(cols = starts_with("missing"),
+               names_to = "missing_data_type",
+               values_to = "count")
+
+missing_by_location
+
+#Summarizing the total count of missing and not missing data
+borough_incident <- shooting_data %>%
+  group_by(BORO) %>%
+  summarise(total_incidents = n(),
+    Missing_Count = sum(missing_sex),
+    Non_Missing_Count = total_incidents - Missing_Count
+  ) %>%
+  pivot_longer(cols = c(Missing_Count, Non_Missing_Count),
+               names_to = "Detail_Type",
+               values_to = "Count")
+```
+
+## Visualization of Data
+The first thing we're going to see is the total number of incidents by bourough. We will also look at the shooting incidents over time using a bar chart. I also want to see the number of missing data for the incidents for each borogh. We will also look at the age group and gender of victims per borough. 
+``` {r visualization}
+#Creating a count of shooting incidents grouped by month
+monthly_counts <- shooting_data %>%
+  mutate(month = floor_date(OCCUR_DATE, "month")) %>%
+  group_by(month) %>%
+  summarise(count = n())
+
+# Creating a bar chart to look at the incident distribution over time 
+monthly_counts %>%
+  ggplot(aes(x = month, y = count))+
+  geom_col() +
+  scale_x_date(date_breaks = "1 year", date_labels = "%Y")+
+  theme(axis.text.x = element_text(angle = 90)) +
+  labs(title = "Daily Shooting Incidents Over Time",
+       x = "Date",
+       y = "Count of Incidents")
+
+#Creating a bar chart to see the number of incidents per borough
+borough_count %>%
+  ggplot(aes(x = BORO, y = count, fill = BORO)) +
+  geom_bar(stat = "identity") +
+  scale_y_continuous(breaks = seq(0, 11000, by = 1000))+
+  theme_minimal() +
+  labs(title = "Incidents per Borough",
+       x = "Borough",
+       y = "Number of Incidents")
+
+#Creating a bar chart to see the number of missing data per borough
+missing_by_location %>%
+  ggplot(aes(x = BORO, y = count, fill = missing_data_type)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_minimal() +
+  labs(title = "Missing Perpetrator Details per Borough",
+       x = "Borough",
+       y = "Count of Missing Data")
+
+#Bar chart to see the missing data compared to the non-missing data per borough
+borough_incident %>%
+  ggplot(aes(x = BORO, y = Count, fill = Detail_Type)) +
+  geom_bar(stat = "identity", position = "stack") +
+  theme_minimal() +
+  labs(title = "Total Incidents per Borough with Missing and Non-Missing Details",
+       x = "Borough",
+       y = "Count of Incidents")
+
+#Creating a visualization to examine the age group and gender of victims per borough 
+# Aggregate the data
+agg_data <- shooting_data %>%
+  group_by(BORO, VIC_AGE_GROUP, VIC_SEX) %>%
+  summarise(count = n()) %>%
+  ungroup()
+
+# Create a stacked bar chart
+ggplot(agg_data, aes(x = BORO, y = count, fill = VIC_AGE_GROUP)) +
+  geom_bar(stat = "identity", position = position_dodge()) +  # Use position_dodge to separate bars for age groups
+  facet_wrap(~VIC_SEX) +  # Add this line to create a separate plot for each gender
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) +  # Rotate x-axis labels to vertical
+  labs(title = "Age Group and Gender of Victims per Borough",
+       x = "Borough",
+       y = "Number of Victims",
+       fill = "Victim Age Group")
+```
+
+## Analysis of Data After Visualization
+1. There seems to be a pattern to the shooting incidents. It seems like there are certain months that the shooting incidents are the highest and it always seems to decrease towards the end of the year.
+2. To do a fair analysis of number of incidents per borough, I might need to account for the population size of each borough.
+``` {r visualization2}
+## Getting the average incident per month
+shooting_data$month <- format(shooting_data$OCCUR_DATE, "%m")
+monthly_average <- shooting_data %>%
+  group_by(month) %>%
+  summarise(avg_incident = mean(n()))
+
+#Converting the numbered month to the name of the month
+monthly_average <- monthly_average %>%
+  mutate(month = factor(month, levels = sprintf("%02d", 1:12), labels = base::month.name))
+
+#Bar chart showing the average number of incidents per month
+monthly_average %>%
+  ggplot(aes(x = month, y = avg_incident, fill = month)) +
+  geom_bar(stat = "identity") +
+  theme(axis.text.x = element_text(angle = 90)) +
+  labs(title = "Average Shooting Incidents by Month",
+       x = "Month",
+       y = "Average Number of Incidents")
+```
+
+## Modeling Data
+``` {r modeling}
+# Dividing up the data according to missing and non-missing variables for each category
+borough_data <- shooting_data %>%
+  group_by(BORO) %>%
+  summarise(
+    Total_Incidents = n(),
+    Missing_Age_Count = sum(missing_age_group),
+    Non_Missing_Age_Count = Total_Incidents - Missing_Age_Count,
+    Missing_Sex_Count = sum(missing_sex),
+    Non_Missing_Sex_Count = Total_Incidents - Missing_Sex_Count,
+    Missing_Race_Count = sum(missing_race),
+    Non_Missing_Race_Count = Total_Incidents - Missing_Race_Count
+  )
+
+model <- lm(Total_Incidents ~ Missing_Age_Count + Missing_Sex_Count + Missing_Race_Count, data = borough_data)
+summary(model)
+
+long_borough_data <- borough_data %>%
+  pivot_longer(cols = c("Missing_Age_Count", "Missing_Sex_Count", "Missing_Race_Count"),
+               names_to = "Missing_Data_Type",
+               values_to = "Missing_Count")
+
+# Combined plot
+ggplot(long_borough_data, aes(x = Missing_Count, y = Total_Incidents)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE, color = "blue", linetype = "dotted") +
+  facet_wrap(~ Missing_Data_Type, scales = "free_x") +
+  labs(title = "Total Incidents vs Missing Data Counts (per Borough)",
+       x = "Missing Data Count", y = "Total Incidents") +
+  theme_minimal()
+
+```
+
+## Conclusion
+Some of the key findings from our analysis of NYPD Shooting Incident (Historic) dataset from DATA.GOV include:
+
+1. There is a noticeable fluctuation in shooting incidents over time, with certain months showing higher incident rates. This suggests a possible seasonal or temporal pattern that could be influenced by various external factors such as weather, holidays, or police activity.
+2. Each borough exhibits a distinct pattern in terms of shooting incidents. However, a comprehensive analysis requires considering the population size of each borough to ensure fair comparisons.
+3. A notable correlation exists between the number of incidents in a borough and the missing details on perpetrators. This could indicate areas with higher crime rates also face challenges in crime reporting and perpetrator identification.
+
+**The potential sources of biases include:**
+
+- The significant amount of missing data, especially regarding perpetrator details, could skew the analysis. This missing data might be non-random and could be related to the efficiency of law enforcement in different areas.
+- The data is dependent on the accuracy and completeness of the NYPD's reporting. Any systemic biases in police reporting practices could affect the findings.
+- Not accounting for population size and density in each borough may lead to misleading conclusions about the relative safety or risk in these areas.
+
+It is very possible for personal biases to influence the analysis. Bias mitigation is crucial for  ensuring the integrity and objectivity of the findings especially in areas such as crime statistics.
